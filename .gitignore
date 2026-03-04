@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+data/*
+*.zip
+*.key
+*.pem
+.venv
+.idea/misc.xml
+.idea/modules.xml
+.idea/vcs.xml
+.idea/*
+.idea/home_budget.iml
+/backups/mongo_dumps/*.enc
+/frontend/node_modules/
+.vite
