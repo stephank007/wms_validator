@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+This a one time only
 upload_schema_to_mongo.py
 ─────────────────────────────────────────────────
 Reads common_schema.json and upserts it into MongoDB.
