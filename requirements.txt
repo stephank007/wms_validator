@@ -17,3 +17,7 @@ python-docx
 gunicorn
 rich
 bcrypt
+fastapi
+uvicorn
+python-jose[cryptography]
+python-multipart
