@@ -6,6 +6,7 @@ pandas
 numpy
 openpyxl
 pymongo
+pymongo[srv]
 devtools
 pydantic
 pydantic_cli

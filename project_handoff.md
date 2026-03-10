@@ -1,313 +1,370 @@
-# WMS–SAP Validation Project — Handoff Summary
+# WMS–SAP Validation Project — Handoff Summary (Session 13)
 > Use this document to brief Claude in a new chat. Paste it in full at the start.
+> This document supersedes all previous handoff files.
 
 ---
 
 ## Who You Are
-- Name: Eithan (or Stephan Katz — same person)
-- Background: Python developer, zero JavaScript/JSX/React experience
-- OS: macOS
-- IDE: PyCharm (Professional, with npm runner support confirmed working)
-- Node.js: v24.13.1 (freshly installed LTS)
-- npm: 11.8.0
+- **Name:** Eithan (Stephan Katz — same person)
+- **Background:** Python developer, beginner JavaScript/JSX/React
+- **OS:** macOS
+- **IDE:** PyCharm Professional
+- **Python:** 3.11 (venv at `.venv/`)
+- **Node.js:** v24.13.1 / npm 11.8.0
 
 ---
 
-## What This Project Is
+## Project Overview
 
-A **SAP ↔ WMS interface validation system**. SAP sends JSON payloads to a Warehouse Management System (WMS). Each payload has an `INTERFACE_NAME` field that identifies which of 4 interface types it belongs to. The system validates every payload against a two-layer JSON Schema:
+A **SAP ↔ WMS interface validation system**. SAP sends JSON payloads to a Warehouse Management System (WMS). Each payload has an `INTERFACE_NAME` field identifying which of 40 active interface types it belongs to. The system validates every payload against a two-layer JSON Schema:
 
-- **Layer 1 (Firewall / Network Element)**: Catalogue-wide field constraints — 369 known field names (Hebrew and special-character field names filtered out), each with type and `maxLength`. Applies to *every* payload regardless of interface.
-- **Layer 2 (App Check / Completeness)**: Required fields, `minLength`, `pattern` (date/time formats, decimals), and `enum` values (e.g. `CONSIGNEE` must be `ATAL`, `IDF`, or `AIR`).
-
-Routing between layers happens via `INTERFACE_NAME` using JSON Schema `allOf` + `if/then` + `$ref`.
+- **Layer 1 (Firewall):** Catalogue-wide field constraints — 325 known fields, each with type and `maxLength`. Applies to every payload regardless of interface. Now includes `array` and `object` types for fields like `ITEMS` and `CONTACT_PERSONS`.
+- **Layer 2 (App Check):** Required fields, `minLength`, `pattern` (date/time formats), `enum` values, and full object/array schemas per interface.
 
 ---
 
-## The 4 Active Interfaces
-
-| Num | INTERFACE_NAME | Title | Req / Opt props | Routed? |
-|-----|---------------|-------|----------------|---------|
-| 1 | *(empty — not yet assigned)* | Items Master | 14 req / 3 opt | ❌ No routing key in schema |
-| 2 | `ZQM_WMS_INSPECTION_OUTBOUND` | Quality Inspection | 10 req / 1 opt | ✅ |
-| 3 | `ZSDWMS_CUST_OUTBOUND` | Customers | 11 req / 5 opt | ✅ |
-| 27 | `ZMM_WMS_ORDER_KIT_CREATE` | Kit Work Orders | 20 req / 5 opt | ✅ |
-
-> **Note on Interface 1**: The `common_schema.json` source has `x-interface-name: ""` for Interface 1 — no routing key assigned yet. It exists in `$defs` and its required/optional fields are defined, but no `allOf` branch can dispatch to it because there is no `INTERFACE_NAME` constant to match on. The React app surfaces this visibly as a "NO KEY" warning badge on the routing table row. This needs to be fixed in `common_schema.json` by assigning `ZWM_ITEMS_OUTBOUND` as the routing key.
-
-> **Interface 44 (`APPOINTMENT_ENTRY_RESPONSE`) was removed** from `common_schema.json` and from the React app's `$defs` during this session. It is not in the current schema. One sample payload uses it to demonstrate the "unknown interface" failure path.
-
----
-
-## allOf Routing Branches (3 active)
-
-```json
-{ "if": { "INTERFACE_NAME": { "const": "ZQM_WMS_INSPECTION_OUTBOUND" } }, "then": { "$ref": "#/$defs/Interface2"  } },
-{ "if": { "INTERFACE_NAME": { "const": "ZSDWMS_CUST_OUTBOUND"        } }, "then": { "$ref": "#/$defs/Interface3"  } },
-{ "if": { "INTERFACE_NAME": { "const": "ZMM_WMS_ORDER_KIT_CREATE"    } }, "then": { "$ref": "#/$defs/Interface27" } }
-```
-
-Interface 1 has no `if/then` branch. Interface 4 does not exist in the current schema.
-
----
-
-## What Was Built (in order)
-
-### Sessions 1–2: Excel → JSON pipeline (Python)
-- Source: Excel file with 40 schema tabs, Hebrew column headers
-- Built a Python parser that reads the Excel, translates Hebrew headers to English, outputs `schema_data.json`
-- `schema_data.json` contains all 40 schemas, each with fields: `json_field`, `required`, `length`, `field_type`, `possible_values`, `field_description`
-- Lives at: `services/schema_data.json` (relative to project root)
-
-### Session 3: Field matrix report (Python + openpyxl)
-- Cross-reference Excel matrix: 552 fields × 40 schemas
-- Shows which fields appear in which schemas
-- Purely a reporting artifact, not used in validation
-
-### Sessions 4–5: Two-layer Python validation system
-
-#### `common_schema.py`
-- Reads `schema_data.json`, builds `FIELD_CATALOGUE` dict: `{field_name: max_length}`
-- `CommonSchema.validate(payload)` → `CommonResult` (Pydantic `BaseModel`)
-- Checks: INTERFACE_NAME present, all values are strings, no field exceeds catalogue maxLength
-- Does NOT check required fields — that's the interface layer's job
-- `catalogue_json_schema()` emits a full JSON Schema `properties` block for all catalogue fields
-
-#### `interface_models.py`
-- Reads `schema_data.json`, builds 5 `InterfaceSpec` objects
-- **Upgraded to Pydantic v2**: each interface is a real typed class via `create_model()`
-- `INTERFACE_REGISTRY`: `{num → InterfaceSpec}`
-- `PYDANTIC_MODELS`: `{num → Pydantic model class}`
-- `IFACE_NAME_TO_NUM`: routes by INTERFACE_NAME string
-- `InterfaceValidator.validate(payload, num)` → `InterfaceResult`
-- `InterfaceValidator.validate_auto(payload)` → auto-routes by INTERFACE_NAME
-- `get_interface_json_schema(num)` → OpenAPI-compatible JSON Schema per interface
-- `get_all_json_schemas()` → all schemas as a dict
-- `InterfaceResult` carries `model_instance` (Pydantic object when passed) and `pydantic_error` (raw ValidationError when failed)
-
-#### `engineered_data.py`
-- 28 hand-crafted test payloads covering all interfaces
-- Mix of: valid payloads, missing required fields, length violations, enum violations, multi-violation cases
-- Each test case: `(description, payload_dict, interface_num, expect_common_pass, expect_iface_pass)`
-
-#### `test_runner.py`
-- Runs all 28 test cases
-- Rich-style terminal output using pure ANSI escape codes (no external dependencies)
-- Result: **28/28 tests pass**
-- Also writes `schema_validation_report.txt` (ANSI stripped)
-
-### Session 6: `common_schema.json` + React network validator
-
-#### `common_schema.json` (60KB)
-- Full **JSON Schema Draft 2020-12** file
-- Generated from `schema_data.json` via Python
-- 379 raw fields in `properties` (369 after filtering Hebrew/special-char names in the React app)
-- 4 interfaces in `$defs` (Interface1, Interface2, Interface3, Interface27)
-- 3 `allOf` routing branches (Interface1 has no routing key)
-- Source of truth for the React app
-
-### Session 7 (current): React app refinement + deployment packaging
-
-#### `App.jsx` — the React validator (final state)
-
-**What it does:**
-- Validates JSON payloads in the browser — no server, no backend, fully self-contained
-- Embedded `COMMON_SCHEMA` object: catalogue properties + allOf routing + $defs all in one JS object
-- Two visible validation layers with separate error counts and badges
-
-**UI structure (top to bottom):**
-1. **Header bar** — shows live counts: catalogue fields, interfaces, routing branches, layers
-2. **Layer Legend** — two chips explaining L1 (Firewall) and L2 (App Check)
-3. **Network Topology Diagram** — animated flow: `SAP ERP → [L1 Firewall box] → [L2 App Check box] → WMS`. Each box shows live pass/fail count. Arrow between L1 and L2 shows "✗ BLOCKED" when L1 fails
-4. **Interface Routing Table** — 4 rows (IF-1 through IF-27), the matched row lights up with the interface color; IF-1 shows "NO KEY" badge
-5. **Payload Editor** (left panel) — textarea + 8 sample payload buttons + VALIDATE button
-6. **Validation Results** (right panel) — pass/fail status bar, L1/L2 error count chips, error list with layer badge + rule badge per row, warnings list
-7. **Schema Explorer** (bottom) — tabbed: Routing | IF-N Fields | Catalogue | JSON Schema
-
-**Validation engine (`runValidation` function):**
-- Parses JSON from textarea
-- Layer 1: runs `validateAgainstSchema(payload, COMMON_SCHEMA, COMMON_SCHEMA)` → catalogue type + maxLength checks
-- Layer 2: finds matching `allOf` branch by `INTERFACE_NAME`, resolves `$ref`, runs `validateAgainstSchema(payload, subSchema, COMMON_SCHEMA)` → required + minLength + pattern + enum checks
-- Deduplicates errors between layers (same field + same rule not reported twice)
-- Returns: `{ errors, warnings, routedTo, layer1Errors, layer2Errors }`
-
-**Theme:**
-- Background: warm cream `#faf7f0` (page), `#f5f0e8` (cards)
-- All text: dark — primary `#111827`, body `#374151`, muted `#64748b`
-- Validate button: dark blue gradient `#1e3a5f → #2d1e4f`, **white text `#ffffff`**
-- Accent colors: blue `#3b82f6` (L1/IF-1), amber `#f59e0b` (IF-2), green `#10b981` (IF-3), purple `#8b5cf6` (IF-27)
-- Error red `#ef4444`, pass green `#22c55e`, warning amber `#f59e0b`
-- Layer 1 badge: blue tint bg `#ddeaf7` / Layer 2 badge: purple tint bg `#ece8f8`
-
-**Sample payloads (8 total):**
-
-| Label | Interface | Outcome |
-|-------|-----------|---------|
-| IF-2 Quality ✓ | ZQM_WMS_INSPECTION_OUTBOUND | Valid |
-| IF-2 Quality ✗ | ZQM_WMS_INSPECTION_OUTBOUND | ID too long, PLANT too short, bad DATE |
-| IF-3 Customers ✓ | ZSDWMS_CUST_OUTBOUND | Valid |
-| IF-3 Customers ✗ | ZSDWMS_CUST_OUTBOUND | PLANT too short, 7 required fields missing |
-| IF-27 Kit ✓ | ZMM_WMS_ORDER_KIT_CREATE | Valid |
-| IF-27 Kit ✗ | ZMM_WMS_ORDER_KIT_CREATE | PLANT enum violation, bad TIME, 12 missing required |
-| ✗ Missing IF_NAME | *(none)* | L1 required error: INTERFACE_NAME absent |
-| ✗ Unknown IF_NAME | APPOINTMENT_ENTRY_RESPONSE | L1 passes, L2 no routing match |
-
----
-
-## File Structure — Current Package (`wms-validator.zip`)
+## Complete Folder Structure
 
 ```
-wms-validator/                  ← unzip and work from here
-│
-├── src/
-│   ├── App.jsx                 ← MAIN FILE: entire validator (schema + engine + UI)
-│   └── main.jsx                ← 4-line React entry point (never needs editing)
-│
-├── index.html                  ← Single HTML page shell (never needs editing)
-├── package.json                ← npm project: React 18, Vite 5
-├── vite.config.js              ← Build config: just enables JSX (never needs editing)
-│
-├── run-production.bat          ← Windows: double-click to build + open in browser
-├── run-production.sh           ← Mac/Linux: run to build + open in browser
-└── README.md                   ← Deployment options (local, Netlify, IIS/Nginx)
+wms_validator/                          ← project root
+├── .venv/                              ← Python 3.11 virtual environment
+├── backend/
+│   ├── main.py                         ← FastAPI entry point (runs on port 8001)
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── models.py                   ← Pydantic request/response shapes
+│   │   ├── auth_router.py              ← Auth endpoints (renamed from router.py)
+│   │   └── service.py                  ← Business logic (hashing, JWT, DB queries)
+│   └── schema/
+│       ├── __init__.py
+│       └── schema_router.py            ← GET /api/schema (renamed from router.py)
+├── backend/generate/
+│   ├── generate_common_schema.py       ← Reads schema_data.json → writes common_schema.json
+│   └── upload_schema_to_mongo.py       ← Pushes common_schema.json → MongoDB
+├── services/
+│   ├── common_paths.py                 ← PROJECT_ROOT and DATA_DIR path constants
+│   └── mongo_store.py                  ← MongoStore singleton client (see below)
+├── user_management/
+│   ├── create_users_collection.py      ← Creates users collection + indexes (run once)
+│   └── seed_admin_user.py              ← Creates first admin user (run once)
+├── data/
+│   ├── schema_data.json                ← Master source data (from Excel parser)
+│   ├── common_schema.json              ← Generated JSON Schema (current production)
+│   ├── common_schema_v2.json           ← Enriched schema with array/object types (PENDING promotion)
+│   └── schemas.xlsx                    ← Original Excel source
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx                     ← Full React app: auth screens + validator
+│   │   └── main.jsx                    ← React entry point (never edit)
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── enrich_schema_v2.py                 ← Uploads common_schema_v2.json → Atlas schemas_v2 collection
+├── promote_v2.py                       ← Renames schemas→schemas_backup, schemas_v2→schemas
+├── rollback_to_backup.py               ← Restores schemas from schemas_backup
+└── requirements.txt
 ```
 
-**Key rule:** `App.jsx` is the only file you ever edit. Everything else is scaffolding.
+> **Important:** `services/` lives inside `backend/`. Python import fix:
+> `sys.path.insert(0, str(Path(__file__).resolve().parent))` in `main.py`
+> `sys.path.insert(0, str(Path(__file__).resolve().parents[1]))` in `auth/service.py` and `schema/schema_router.py`
 
 ---
 
-## Python Project File Locations
+## Port Map
 
-```
-services/
-  schema_data.json              ← master data source (generated from Excel)
-  common_paths.py               ← defines DATA_DIR pointing to schema_data.json
-common_schema.py                ← Layer 1 validator (Pydantic BaseModel result)
-interface_models.py             ← Layer 2 validators (Pydantic v2 create_model)
-engineered_data.py              ← 28 test cases
-test_runner.py                  ← test harness + ANSI reporter
-schema_validation_report.txt    ← plain-text report output
-common_schema.json              ← JSON Schema Draft 2020-12 (generated, 60KB)
-```
+| Service | Port | Command |
+|---------|------|---------|
+| React dev server (Vite) | 5173 | `npm run dev` (in `frontend/`) |
+| FastAPI backend | 8001 | `wms-api` |
+| HB_V2 app (other project) | 8000 | auto-starts on login — do not use 8000 |
 
 ---
 
-## Running the App
+## Shell Alias (in `~/.zshrc`)
 
-### Development (edit-and-refresh workflow)
 ```bash
-npm install       # first time only — downloads React + Vite into node_modules/
-npm run dev       # starts dev server at http://localhost:5173
+alias wms-api="PYTHONPATH=/Users/eithan/opt/dev/wms_validator \
+  /Users/eithan/opt/dev/wms_validator/.venv/bin/uvicorn \
+  backend.main:app --reload --port 8001"
 ```
-In PyCharm: Run Configuration → npm → script: `dev` → click ▶
 
-### Production build (compiled, deployable)
+---
+
+## MongoDB — Two Environments
+
+### Atlas (production — currently active)
+```
+ATLAS_URI=mongodb+srv://stephankatz_db_user:<password>@ac-wewfk5q.28qr4ey.mongodb.net/wms_validator
+```
+Set in `~/.zshrc` as `ATLAS_URI`. Cluster: `ac-wewfk5q.28qr4ey.mongodb.net`, 3-node replica set, MongoDB 8.0.19.
+
+### Local (fallback)
+`mongodb://localhost:27017` — used automatically if `ATLAS_URI` is not set.
+
+### Collections
+
+| Database | Collection | Purpose |
+|----------|-----------|---------|
+| `wms_validator` | `schemas` | Live production schema (`_id: "common_schema"`) |
+| `wms_validator` | `schemas_v2` | Staging — enriched schema (PENDING — not yet uploaded) |
+| `wms_validator` | `schemas_backup` | Created by `promote_v2.py` before promotion |
+| `wms_validator` | `users` | User accounts with bcrypt-hashed passwords |
+| `wms_validator` | `binat` | MoM collection |
+
+### Schema storage pattern
+```python
+# Writing
+document = {"_id": "common_schema", "data": json.dumps(schema, ensure_ascii=False)}
+col.replace_one({"_id": "common_schema"}, document, upsert=True)
+
+# Reading
+doc = col.find_one({"_id": "common_schema"})
+schema = json.loads(doc["data"])
+```
+> Stored as JSON **string** to avoid MongoDB misinterpreting `$schema`, `$id`, `$defs` keys.
+
+---
+
+## mongo_store.py — Singleton Pattern (CRITICAL)
+
+The MongoClient is created **once at import time** and shared by all requests. **Never call `store.client.close()` inside a request handler** — it kills the shared client for all future requests.
+
+```python
+# Connection priority in mongo_store.py
+MONGO_URI = os.environ.get("ATLAS_URI") or os.environ.get("MONGO_URI") or "mongodb://localhost:27017"
+
+# Singleton — created once, shared by all MongoStore instances
+_CLIENT: MongoClient = _build_client(MONGO_URI, _URI_LABEL)
+
+class MongoStore:
+    def __init__(self, ..., client=None):
+        self.client = client or _CLIENT   # never creates a new MongoClient
+```
+
+**Properties available on `store`:**
+- `store.schemas` — live production collection
+- `store.schemas_v2` — staging enriched schema
+- `store.schemas_backup` — backup from promote_v2.py
+- `store.binat` — MoM collection
+
+**`_build_client` timeouts:** `serverSelectionTimeoutMS=8000`, `connectTimeoutMS=8000`, `socketTimeoutMS=20000`, `maxPoolSize=10`, `minPoolSize=1`
+
+---
+
+## FastAPI Backend
+
+**Interactive docs:** http://localhost:8001/docs
+
+### Auth endpoints (`backend/auth/auth_router.py`)
+
+| Method | URL | Purpose | Auth |
+|--------|-----|---------|------|
+| `POST` | `/api/auth/register` | Create new account | No |
+| `POST` | `/api/auth/login` | Get JWT token | No |
+| `GET`  | `/api/auth/me` | Get current user profile | Bearer token |
+| `POST` | `/api/auth/forgot-password` | Request reset token (dev: returned in response) | No |
+| `POST` | `/api/auth/reset-password` | Set new password with token | No |
+
+### Schema endpoint (`backend/schema/schema_router.py`)
+
+| Method | URL | Purpose | Auth |
+|--------|-----|---------|------|
+| `GET` | `/api/schema` | Return full `common_schema` JSON from MongoDB | Optional Bearer |
+
+### JWT config (in `service.py`)
+```python
+SECRET_KEY         = "79ed1488bc46d9f8ad46f4a35ee9bd22e4231a9acdd3e0f975614fe0b8ea4a23"
+ALGORITHM          = "HS256"
+TOKEN_EXPIRE_HOURS = 8
+```
+> ⚠️ Move `SECRET_KEY` to `.env` before any deployment.
+
+### main.py imports (updated for renamed routers)
+```python
+from backend.auth.auth_router import router as auth_router
+from backend.schema.schema_router import router as schema_router
+```
+
+---
+
+## React App (`frontend/src/App.jsx`)
+
+### App flow
+```
+No token in localStorage
+  → LoginScreen   → POST /api/auth/login   → store token → ValidatorApp
+  → RegisterScreen → POST /api/auth/register → auto-login → ValidatorApp
+  → ForgotScreen  → POST /api/auth/forgot-password → token shown on screen (dev mode)
+  → ResetScreen   → POST /api/auth/reset-password → back to login
+
+Token present → fetch /api/auth/me (validate token) → ValidatorApp
+Token invalid/expired → clear localStorage → back to LoginScreen
+```
+
+### ValidatorApp — schema loading
+```
+Mount → fetch /api/schema (Bearer token)
+      → COMMON_SCHEMA = data
+      → _initDerivedConstants() — builds ROUTABLE_NAMES, IFACE_COLOURS, INTERFACES
+      → setSchemaReady(true) → validator renders
+```
+
+---
+
+## Complete Roadmap
+
+```
+✅ STEP 1  Schema → MongoDB
+✅ STEP 2a MongoDB users collection + indexes
+✅ STEP 2b FastAPI auth backend (register/login/me/forgot/reset)
+✅ STEP 2c React login/register/forgot/reset screens + JWT
+✅ STEP 3  GET /api/schema endpoint (reads from MongoDB, optional Bearer)
+✅ STEP 4  React fetches schema from API (App.jsx ~1,686 lines, was ~14,373)
+✅ STEP 5  MongoDB Atlas integration + singleton MongoClient
+✅ STEP 6  Removed all client.close() from request handlers (service.py + schema_router.py)
+✅ STEP 7  Renamed router.py → auth_router.py / schema_router.py (avoid filename collisions)
+⏳ STEP 8  Schema enrichment promotion (files ready, not yet executed — see below)
+⏳ STEP 9  POST /api/validate — move validation to Python backend
+```
+
+---
+
+## Schema Enrichment — V2 (PENDING)
+
+### What changed in `common_schema_v2.json`
+
+| Layer | Field | Interface | Change |
+|---|---|---|---|
+| L1 | `ITEMS` | all | `type: array`, `maxItems: 500` |
+| L1 | `CONTACT_PERSONS` | all | `type: array`, `maxItems: 20` |
+| L2 | `ITEMS` | Interface5 (`ZWMS_INBOUND_DELIVERY_CREATE`) | array of delivery line objects, `minItems: 1`, required: `MATERIAL`, `QUANTITY`, `REC_DOC_LINE` |
+| L2 | `CONTACT_PERSONS` | Interface4 (`ZPUR_WMS_VEND_OUTBOUND`) | array of contact objects, required: `CP_FIRST_NAME`, `CP_LAST_NAME` |
+
+### 4-file promotion lifecycle
+```
+enrich_schema_v2.py     → uploads common_schema_v2.json to Atlas schemas_v2 (safe staging)
+     ↓ test against schemas_v2
+promote_v2.py           → schemas → schemas_backup, schemas_v2 → schemas (go live)
+     ↓ if something breaks
+rollback_to_backup.py   → instant restore from schemas_backup
+```
+
+**Status:** `enrich_schema_v2.py`, `promote_v2.py`, `rollback_to_backup.py` all exist in project root. **None have been run yet.** `schemas_v2` collection does not yet exist in Atlas.
+
+### To execute enrichment
 ```bash
-npm run build     # compiles everything into dist/ folder
-npm run preview   # serves dist/ at http://localhost:4173
+cd /Users/eithan/opt/dev/wms_validator
+PYTHONPATH=. .venv/bin/python enrich_schema_v2.py   # upload to schemas_v2
+# test the app against schemas_v2 first
+PYTHONPATH=. .venv/bin/python promote_v2.py          # promote to live
 ```
-**Windows shortcut:** double-click `run-production.bat`
-**Mac shortcut:** `./run-production.sh`
-
-### Deploy to real URL (free, no account)
-1. `npm run build`
-2. Go to **netlify.com/drop**
-3. Drag the `dist/` folder onto the page → get a live URL instantly
-
-### Deploy to your own server (IIS / Nginx / Apache)
-- Run `npm run build`, copy the `dist/` folder contents to your web root
-- No Node.js needed on the server — it's just static HTML + JS files
 
 ---
 
-## PyCharm Run Configuration
+## Validation Architecture — Current State
 
-- **Type**: npm
-- **Name**: `wms-validator dev`
-- **package.json**: `/Users/eithan/wms-validator/package.json`
-- **Command**: `run`
-- **Scripts**: `dev`
-- **Result**: clicking ▶ starts the dev server, `Cmd`-click `localhost:5173` opens the app
+### Layer 1 / Layer 2 strategy (key architectural decision)
 
-*(Note: previous config used path `my-validator` — update to `wms-validator` if you had the old one set up)*
+**The core insight:** Layer 1 is a firewall — it only needs to know a field *exists* in the catalogue and check its top-level type (`string`, `array`, `object`). It does NOT need to validate the internal structure of arrays/objects. That is Layer 2's job.
+
+This means:
+- A field arriving as an array → Layer 1 checks `type == array` and `maxItems`. Pass.
+- Layer 2 then validates each item's internal fields against the interface-specific schema.
+- This architecture handles any SAP payload structure (flat strings, arrays of objects, nested dicts) cleanly without changing the two-layer philosophy.
+
+### Where validation lives right now
+
+**All validation runs in the browser, in JavaScript, inside `App.jsx`.**
+
+Key functions:
+- `runValidation(payloadText)` — top-level entry point
+- `validateAgainstSchema(payload, schema, rootSchema)` — core engine
+- `resolveRef(ref, rootSchema)` — resolves `$ref` pointers
+- `validateProp(fname, value, propSchema)` — checks a single field
+
+Implements a subset of JSON Schema Draft 2020-12: `type`, `maxLength`, `minLength`, `pattern`, `enum`, `required`, `if/then`, `$ref`.
+
+### Old Python validators (Sessions 4–5)
+
+Two standalone scripts exist somewhere in the project (not connected to FastAPI):
+- `common_schema.py` — Layer 1 validator
+- `interface_models.py` — Layer 2 per-interface Pydantic models
+- `test_runner.py` — 28-test suite (all passing)
+
+**Exact location not confirmed** — likely project root or `services/`. Find them before starting Step 9.
+
+### POST /api/validate — what it will look like
+
+```
+React: POST /api/validate  { "payload": {...} }
+         ↓
+FastAPI backend/validate/validate_router.py
+  1. Load COMMON_SCHEMA from MongoDB (cache it — don't fetch every request)
+  2. Layer 1: validate all fields against catalogue (type + maxLength/maxItems)
+  3. Layer 2: route by INTERFACE_NAME → validate against interface $defs
+  4. Return: { errors, warnings, routedTo, layer1Errors, layer2Errors }
+         ↓
+React: render result (no UI changes needed)
+```
+
+**Recommended approach — Option A (`jsonschema` library):**
+```python
+pip install jsonschema
+from jsonschema import Draft202012Validator
+validator = Draft202012Validator(schema)
+errors = list(validator.iter_errors(payload))
+```
+Clean, standard, handles all Draft 2020-12 features. No need to maintain handwritten validators.
 
 ---
 
-## Key Technical Decisions Made
+## Pending Items
+
+| Item | Priority | Notes |
+|------|----------|-------|
+| Run `enrich_schema_v2.py` | High | Upload enriched schema to Atlas `schemas_v2` |
+| Test app against `schemas_v2` | High | Before promoting |
+| Run `promote_v2.py` | High | Promote v2 to live `schemas` collection |
+| Move `SECRET_KEY` to `.env` | High | Before any deployment |
+| `POST /api/validate` endpoint | Medium | Move validation from JS → Python (Option A recommended) |
+| Interface 1 routing key | Medium | Assign `ZWM_ITEMS_OUTBOUND` in schema, re-upload |
+| Real email for forgot-password | Low | SendGrid/SES — backend already structured for it |
+| User management UI | Low | Admin screen: view/activate/deactivate users |
+
+---
+
+## Key Technical Decisions
 
 | Decision | Reason |
 |----------|--------|
-| Pydantic v2 over manual loops | `create_model()` gives real typed classes; `model_json_schema()` gives free OpenAPI output; `ValidationError` gives structured errors |
-| `common_schema.json` over Python-only | JSON Schema is language-agnostic — usable in AJV, jsonschema Python lib, Postman, API Gateway, etc. |
-| React/Vite over Plotly/Dash | Validator logic is pure client-side; no server round-trips needed |
-| 369 fields in catalogue (not 379) | 10 fields had Hebrew or special characters in their names and cannot be used as clean JSON property keys |
-| Interface 44 removed from schema | `APPOINTMENT_ENTRY_RESPONSE` was not present in `common_schema.json` — one sample payload demonstrates the "no routing match" behaviour |
-| Interface 1 has no routing key | `common_schema.json` source has `x-interface-name: ""` for Interface 1 — this is a known gap that needs to be fixed in the JSON file |
-| Two separate validator boxes in topology diagram | Makes the L1 (network/firewall) vs L2 (application/completeness) distinction visually clear |
-| Light cream theme | High contrast on all text; dark theme had contrast failures |
-| ANSI codes in test_runner.py | `rich` package unavailable (no network in build environment) |
+| FastAPI (not Node/Express) | Eithan knows Python |
+| bcrypt rounds=12 | Industry standard |
+| JWT (not sessions) | Stateless, works with React SPA |
+| Schema stored as JSON string in MongoDB | Avoids `$id`/`$ref` operator confusion |
+| Port 8001 (not 8000) | Port 8000 occupied by HB_V2 |
+| Singleton MongoClient | Eliminates per-request DNS/SRV lookup (21s → instant) |
+| Never call `client.close()` in request handlers | Closing singleton kills it for all future requests |
+| `auth_router.py` / `schema_router.py` (not `router.py`) | Avoid filename collision confusion |
+| `sys.path.insert` in code (not PYTHONPATH) | Shell env vars don't propagate to uvicorn `--reload` |
+| `let` not `const` for COMMON_SCHEMA | Must be reassignable after API fetch at runtime |
+| All hooks before conditional returns | React Rules of Hooks |
+| Layer 1 checks type only (not internal structure) | Arrays/objects validated at L1 by type+maxItems; internal structure is L2's responsibility |
 
 ---
 
-## Known Issues / Open Items
+## What to Tell Claude in the Next Chat
 
-| Issue | Status |
-|-------|--------|
-| Interface 1 (`ZWM_ITEMS_OUTBOUND`) has no routing key in `common_schema.json` | Open — `x-interface-name` is `""` in the JSON source, so no `allOf` branch can dispatch to it |
-| Interface 44 (`APPOINTMENT_ENTRY_RESPONSE`) removed | Intentional — was not in `common_schema.json`; shown as "unknown interface" demo only |
-| Hebrew field names (10 fields) excluded from catalogue | They exist in `schema_data.json` but can't be clean JSON property keys |
-
----
-
-## Sample Payloads for Testing
-
-```json
-// IF-2 Quality Inspection — VALID
-{
-  "INTERFACE_NAME": "ZQM_WMS_INSPECTION_OUTBOUND",
-  "ID": "0000000000000001",
-  "PLANT": "ATAL",
-  "DATE": "20240601",
-  "TIME": "090000",
-  "CONSIGNEE": "IDF",
-  "INSPECTION_LOT": "300000001234",
-  "MATERIAL": "5000099887",
-  "VENDOR_ID": "V001",
-  "MANUFACTURE_DATE": "20240101",
-  "EVALUATION_CODE": "A"
-}
-
-// IF-3 Customers — INVALID (PLANT too short, 7 required fields missing)
-{
-  "INTERFACE_NAME": "ZSDWMS_CUST_OUTBOUND",
-  "ID": "0000000000000003",
-  "PLANT": "AT",
-  "DATE": "20240701",
-  "TIME": "120000",
-  "CONSIGNEE": "ATAL"
-}
-
-// No INTERFACE_NAME — fails at L1 immediately
-{
-  "ID": "123",
-  "PLANT": "ATAL",
-  "DATE": "20240315"
-}
-
-// Unknown INTERFACE_NAME — passes L1 but no L2 routing match
-{
-  "INTERFACE_NAME": "APPOINTMENT_ENTRY_RESPONSE",
-  "DATE": "20241010",
-  "TIME": "093000"
-}
-```
-
----
-
-## What to Ask Claude in the New Chat
-
-Suggested opening message:
-
-> "I'm attaching a handoff document from my previous Claude sessions. I built a JSON Schema validator as a React app (`App.jsx`) that runs locally via Vite/PyCharm. I have zero JavaScript experience. Please walk me through the project, starting from the very basics — what is JavaScript, what is JSX, what is React, and how does my file work. Go slowly, one concept at a time, using examples from my actual file."
+> "I'm attaching a handoff document (Session 13) for my WMS–SAP Validation project.
+> The full stack is working: FastAPI on port 8001, React/Vite on port 5173, MongoDB Atlas.
+> Login, JWT auth, and schema loading from Atlas are all working.
+>
+> I have three things to do in priority order:
+> 1. Execute the schema v2 enrichment (run enrich_schema_v2.py, test, then promote_v2.py)
+> 2. Move SECRET_KEY to .env
+> 3. Build POST /api/validate to move validation from JavaScript (App.jsx) to Python backend
+>
+> Please read the full handoff before we start, especially the Schema Enrichment and
+> Validation Architecture sections."
 
 Then attach this file.

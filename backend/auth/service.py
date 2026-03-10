@@ -108,9 +108,9 @@ def decode_access_token(token: str) -> Optional[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _users_col():
-    """Get the users collection. Called fresh each request — no stale connections."""
+    """Get the users collection from the shared singleton client."""
     store = MongoStore()
-    return store.db["users"], store.client
+    return store.db["users"]
 
 
 def register_user(email: str, username: str, password: str, role: str) -> dict:
@@ -120,32 +120,28 @@ def register_user(email: str, username: str, password: str, role: str) -> dict:
     We return a dict (not raise exceptions) so the router can
     decide what HTTP status code to use.
     """
-    users, client = _users_col()
+    users = _users_col()
 
-    try:
-        # Check duplicates manually for a cleaner error message
-        if users.find_one({"email": email}):
-            return {"ok": False, "error": "email_taken", "message": "This email is already registered"}
-        if users.find_one({"username": username}):
-            return {"ok": False, "error": "username_taken", "message": "This username is already taken"}
+    # Check duplicates manually for a cleaner error message
+    if users.find_one({"email": email}):
+        return {"ok": False, "error": "email_taken", "message": "This email is already registered"}
+    if users.find_one({"username": username}):
+        return {"ok": False, "error": "username_taken", "message": "This username is already taken"}
 
-        now  = datetime.now(timezone.utc)
-        user = {
-            "email":               email,
-            "username":            username,
-            "password_hash":       hash_password(password),
-            "role":                role,
-            "is_active":           True,
-            "created_at":          now,
-            "last_login":          None,
-            "reset_token":         None,
-            "reset_token_expires": None,
-        }
-        users.insert_one(user)
-        return {"ok": True, "user": user}
-
-    finally:
-        client.close()   # always close the connection
+    now  = datetime.now(timezone.utc)
+    user = {
+        "email":               email,
+        "username":            username,
+        "password_hash":       hash_password(password),
+        "role":                role,
+        "is_active":           True,
+        "created_at":          now,
+        "last_login":          None,
+        "reset_token":         None,
+        "reset_token_expires": None,
+    }
+    users.insert_one(user)
+    return {"ok": True, "user": user}
 
 
 def login_user(email: str, password: str) -> dict:
@@ -154,34 +150,30 @@ def login_user(email: str, password: str) -> dict:
     We always say "invalid credentials" — never "email not found"
     (that would tell attackers which emails are registered).
     """
-    users, client = _users_col()
+    users = _users_col()
 
-    try:
-        user = users.find_one({"email": email})
+    user = users.find_one({"email": email})
 
-        # Both "user not found" and "wrong password" return the same error.
-        # This is called "username enumeration protection".
-        if not user or not verify_password(password, user["password_hash"]):
-            return {"ok": False, "error": "invalid_credentials", "message": "Invalid email or password"}
+    # Both "user not found" and "wrong password" return the same error.
+    # This is called "username enumeration protection".
+    if not user or not verify_password(password, user["password_hash"]):
+        return {"ok": False, "error": "invalid_credentials", "message": "Invalid email or password"}
 
-        if not user.get("is_active", True):
-            return {"ok": False, "error": "account_disabled", "message": "Account is disabled"}
+    if not user.get("is_active", True):
+        return {"ok": False, "error": "account_disabled", "message": "Account is disabled"}
 
-        # Update last_login timestamp
-        users.update_one(
-            {"email": email},
-            {"$set": {"last_login": datetime.now(timezone.utc)}}
-        )
+    # Update last_login timestamp
+    users.update_one(
+        {"email": email},
+        {"$set": {"last_login": datetime.now(timezone.utc)}}
+    )
 
-        token = create_access_token(
-            email    = user["email"],
-            username = user["username"],
-            role     = user["role"],
-        )
-        return {"ok": True, "token": token, "user": user}
-
-    finally:
-        client.close()
+    token = create_access_token(
+        email    = user["email"],
+        username = user["username"],
+        role     = user["role"],
+    )
+    return {"ok": True, "token": token, "user": user}
 
 
 def forgot_password(email: str) -> dict:
@@ -194,33 +186,29 @@ def forgot_password(email: str) -> dict:
     Security note: we return the same success message whether the
     email exists or not — prevents attackers from discovering registered emails.
     """
-    users, client = _users_col()
+    users = _users_col()
 
-    try:
-        user = users.find_one({"email": email})
-        if not user:
-            # Don't reveal that the email doesn't exist
-            return {"ok": True, "message": "If that email exists, a reset link was sent", "token": None}
+    user = users.find_one({"email": email})
+    if not user:
+        # Don't reveal that the email doesn't exist
+        return {"ok": True, "message": "If that email exists, a reset link was sent", "token": None}
 
-        # Generate a cryptographically random token (32 bytes = 64 hex chars)
-        token   = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    # Generate a cryptographically random token (32 bytes = 64 hex chars)
+    token   = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
 
-        users.update_one(
-            {"email": email},
-            {"$set": {
-                "reset_token":         token,
-                "reset_token_expires": expires,
-            }}
-        )
-        return {
-            "ok":      True,
-            "message": "If that email exists, a reset link was sent",
-            "token":   token,   # in production: email this, don't return it
-        }
-
-    finally:
-        client.close()
+    users.update_one(
+        {"email": email},
+        {"$set": {
+            "reset_token":         token,
+            "reset_token_expires": expires,
+        }}
+    )
+    return {
+        "ok":      True,
+        "message": "If that email exists, a reset link was sent",
+        "token":   token,   # in production: email this, don't return it
+    }
 
 
 def reset_password(token: str, new_password: str) -> dict:
@@ -228,36 +216,29 @@ def reset_password(token: str, new_password: str) -> dict:
     Find the user with this reset token, check it hasn't expired,
     and replace their password.
     """
-    users, client = _users_col()
+    users = _users_col()
 
-    try:
-        now  = datetime.now(timezone.utc)
-        user = users.find_one({
-            "reset_token": token,
-            "reset_token_expires": {"$gt": now},   # $gt = greater than (not expired)
-        })
+    now  = datetime.now(timezone.utc)
+    user = users.find_one({
+        "reset_token": token,
+        "reset_token_expires": {"$gt": now},   # $gt = greater than (not expired)
+    })
 
-        if not user:
-            return {"ok": False, "error": "invalid_token", "message": "Reset token is invalid or expired"}
+    if not user:
+        return {"ok": False, "error": "invalid_token", "message": "Reset token is invalid or expired"}
 
-        users.update_one(
-            {"_id": user["_id"]},
-            {"$set": {
-                "password_hash":       hash_password(new_password),
-                "reset_token":         None,   # consume the token — can't reuse it
-                "reset_token_expires": None,
-            }}
-        )
-        return {"ok": True, "message": "Password updated successfully"}
-
-    finally:
-        client.close()
+    users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {
+            "password_hash":       hash_password(new_password),
+            "reset_token":         None,   # consume the token — can't reuse it
+            "reset_token_expires": None,
+        }}
+    )
+    return {"ok": True, "message": "Password updated successfully"}
 
 
 def get_user_by_email(email: str) -> Optional[dict]:
     """Fetch a user document by email. Returns None if not found."""
-    users, client = _users_col()
-    try:
-        return users.find_one({"email": email})
-    finally:
-        client.close()
+    users = _users_col()
+    return users.find_one({"email": email})

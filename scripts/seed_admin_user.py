@@ -7,16 +7,19 @@ Run ONCE after create_users_collection.py.
 
     python seed_admin_user.py
 """
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import bcrypt
 from datetime import datetime, timezone
-from services.mongo_store import MongoStore
+from backend.services.mongo_store import MongoStore
 
 
 # ── Change these before running ──────────────────────────
 ADMIN_EMAIL    = "stephan.katz@gmail.com"    # ← your email
 ADMIN_USERNAME = "eithan"                    # ← your username
-ADMIN_PASSWORD = "moshe-123"                 # ← your password (min 8 chars)
+ADMIN_PASSWORD = "moshe-06"                 # ← your password (min 8 chars)
 # ─────────────────────────────────────────────────────────
 
 

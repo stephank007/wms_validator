@@ -19,8 +19,8 @@ print(sys.path)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.auth.router   import router as auth_router
-from backend.schema.router import router as schema_router   # ← Step 3
+from backend.auth.auth_router     import router as auth_router
+from backend.schema.schema_router import router as schema_router   # ← Step 3
 
 app = FastAPI(
     title       = "WMS Validator API",

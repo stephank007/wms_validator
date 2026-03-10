@@ -1,6 +1,359 @@
 import { useState, useEffect, useCallback } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AUTH — Step 2c
+// ─────────────────────────────────────────────────────────────────────────────
+const API_AUTH = "http://localhost:8001/api/auth";
+
+const AUTH_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+  :root {
+    --auth-bg:       #0d1117;
+    --auth-surface:  #161b22;
+    --auth-border:   #30363d;
+    --auth-hi:       #58a6ff;
+    --auth-text:     #e6edf3;
+    --auth-muted:    #7d8590;
+    --auth-accent:   #f0b429;
+    --auth-error:    #f85149;
+    --auth-success:  #3fb950;
+    --auth-mono:     'IBM Plex Mono', monospace;
+    --auth-sans:     'IBM Plex Sans', sans-serif;
+  }
+  .auth-shell {
+    min-height:100vh; display:grid; place-items:center; padding:24px;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 80%, rgba(240,180,41,.07) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 80% 20%, rgba(88,166,255,.06) 0%, transparent 55%),
+      var(--auth-bg);
+    font-family: var(--auth-sans);
+  }
+  .auth-card {
+    width:100%; max-width:400px;
+    background:var(--auth-surface); border:1px solid var(--auth-border);
+    border-radius:6px; padding:40px 36px 36px; position:relative; overflow:hidden;
+    color:var(--auth-text);
+  }
+  .auth-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+    background:linear-gradient(90deg,#7d5c0a,var(--auth-accent),#7d5c0a);
+  }
+  .auth-brand { display:flex; align-items:center; gap:10px; margin-bottom:28px; }
+  .auth-brand-icon { width:32px; height:32px; background:var(--auth-accent); border-radius:4px; display:grid; place-items:center; flex-shrink:0; }
+  .auth-brand-text { font-family:var(--auth-mono); font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--auth-muted); line-height:1.3; }
+  .auth-brand-text strong { display:block; color:var(--auth-text); font-size:14px; letter-spacing:.04em; }
+  .auth-title { font-size:20px; font-weight:600; margin-bottom:4px; }
+  .auth-subtitle { font-size:13px; color:var(--auth-muted); margin-bottom:28px; }
+  .auth-field { margin-bottom:16px; }
+  .auth-field label { display:block; font-family:var(--auth-mono); font-size:11px; font-weight:500; letter-spacing:.06em; text-transform:uppercase; color:var(--auth-muted); margin-bottom:6px; }
+  .auth-field input { width:100%; background:var(--auth-bg); border:1px solid var(--auth-border); border-radius:4px; color:var(--auth-text); font-family:var(--auth-mono); font-size:13px; padding:9px 12px; outline:none; transition:border-color .15s; box-sizing:border-box; }
+  .auth-field input:focus { border-color:var(--auth-hi); }
+  .auth-field input::placeholder { color:var(--auth-muted); opacity:.5; }
+  .auth-btn-primary { width:100%; background:var(--auth-accent); color:#0d1117; border:none; border-radius:4px; font-family:var(--auth-mono); font-size:13px; font-weight:600; letter-spacing:.04em; padding:10px; cursor:pointer; transition:opacity .15s; margin-top:8px; }
+  .auth-btn-primary:hover { opacity:.88; }
+  .auth-btn-primary:disabled { opacity:.4; cursor:not-allowed; }
+  .auth-btn-link { background:none; border:none; color:var(--auth-hi); font-family:var(--auth-sans); font-size:13px; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:2px; }
+  .auth-btn-link:hover { color:var(--auth-text); }
+  .auth-notice { border-radius:4px; padding:10px 12px; font-size:13px; margin-bottom:16px; border:1px solid; }
+  .auth-notice-error   { background:rgba(248,81,73,.08);  border-color:rgba(248,81,73,.3);  color:#ffa198; }
+  .auth-notice-success { background:rgba(63,185,80,.08);  border-color:rgba(63,185,80,.3);  color:#56d364; }
+  .auth-footer { margin-top:20px; display:flex; flex-wrap:wrap; justify-content:center; gap:4px 8px; font-size:13px; color:var(--auth-muted); text-align:center; }
+  .auth-divider { border:none; border-top:1px solid var(--auth-border); margin:20px 0; }
+  .auth-token-box { background:var(--auth-bg); border:1px solid var(--auth-border); border-radius:4px; padding:10px 12px; font-family:var(--auth-mono); font-size:11px; color:var(--auth-accent); word-break:break-all; margin-top:10px; }
+  .auth-topnav { height:48px; background:#161b22; border-bottom:1px solid #30363d; display:flex; align-items:center; padding:0 20px; gap:12px; position:sticky; top:0; z-index:100; }
+  .auth-topnav-brand { display:flex; align-items:center; gap:8px; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:#7d8590; }
+  .auth-topnav-dot { width:8px; height:8px; background:#f0b429; border-radius:2px; flex-shrink:0; }
+  .auth-topnav-spacer { flex:1; }
+  .auth-topnav-user { font-family:'IBM Plex Mono',monospace; font-size:11px; color:#7d8590; }
+  .auth-topnav-user span { color:#e6edf3; }
+  .auth-btn-logout { background:transparent; border:1px solid #30363d; border-radius:4px; color:#7d8590; font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.04em; padding:4px 10px; cursor:pointer; transition:border-color .15s,color .15s; }
+  .auth-btn-logout:hover { border-color:#f85149; color:#f85149; }
+`;
+
+function _injectAuthStyles() {
+  if (document.getElementById("wms-auth-css")) return;
+  const el = document.createElement("style");
+  el.id = "wms-auth-css";
+  el.textContent = AUTH_CSS;
+  document.head.appendChild(el);
+}
+
+async function _authFetch(path, body) {
+  const res = await fetch(`${API_AUTH}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const msg =
+      typeof data.detail === "string"
+        ? data.detail
+        : Array.isArray(data.detail)
+        ? data.detail.map((e) => e.msg).join(", ")
+        : "An error occurred";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function _AuthBrand() {
+  return (
+    <div className="auth-brand">
+      <div className="auth-brand-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <rect x="2" y="8" width="14" height="8" rx="1" fill="#0d1117"/>
+          <path d="M1 8.5L9 3l8 5.5" stroke="#0d1117" strokeWidth="1.5" strokeLinejoin="round"/>
+          <rect x="6" y="10" width="6" height="6" rx="1" fill="#0d1117"/>
+        </svg>
+      </div>
+      <div className="auth-brand-text">
+        <strong>WMS Validator</strong>
+        SAP ↔ WMS Interface
+      </div>
+    </div>
+  );
+}
+
+function _LoginScreen({ onLogin, goRegister, goForgot }) {
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]       = useState(null);
+  const [loading, setLoading]   = useState(false);
+
+  async function handleSubmit() {
+    setError(null); setLoading(true);
+    try {
+      const data = await _authFetch("/login", { email, password });
+      localStorage.setItem("wms_token", data.access_token);
+      onLogin(data.access_token);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <_AuthBrand />
+        <h1 className="auth-title">Sign in</h1>
+        <p className="auth-subtitle">Enter your credentials to access the validator.</p>
+        {error && <div className="auth-notice auth-notice-error">{error}</div>}
+        <div className="auth-field">
+          <label>Email</label>
+          <input type="email" placeholder="you@example.com" value={email}
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key==="Enter" && handleSubmit()} autoFocus />
+        </div>
+        <div className="auth-field">
+          <label>Password</label>
+          <input type="password" placeholder="••••••••" value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key==="Enter" && handleSubmit()} />
+        </div>
+        <button className="auth-btn-primary" onClick={handleSubmit} disabled={loading}>
+          {loading ? "Signing in…" : "Sign in →"}
+        </button>
+        <div className="auth-footer">
+          <button className="auth-btn-link" onClick={goForgot}>Forgot password?</button>
+          <span>·</span>
+          <span>No account?</span>
+          <button className="auth-btn-link" onClick={goRegister}>Register</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function _RegisterScreen({ onLogin, goLogin }) {
+  const [email, setEmail]       = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [error, setError]       = useState(null);
+  const [loading, setLoading]   = useState(false);
+
+  async function handleSubmit() {
+    setError(null);
+    if (password !== confirm) { setError("Passwords do not match."); return; }
+    if (password.length < 8)  { setError("Password must be at least 8 characters."); return; }
+    setLoading(true);
+    try {
+      await _authFetch("/register", { email, username, password });
+      const data = await _authFetch("/login", { email, password });
+      localStorage.setItem("wms_token", data.access_token);
+      onLogin(data.access_token);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <_AuthBrand />
+        <h1 className="auth-title">Create account</h1>
+        <p className="auth-subtitle">Contact an admin after registering to activate your account.</p>
+        {error && <div className="auth-notice auth-notice-error">{error}</div>}
+        <div className="auth-field"><label>Email</label>
+          <input type="email" placeholder="you@example.com" value={email}
+            onChange={e => setEmail(e.target.value)} autoFocus /></div>
+        <div className="auth-field"><label>Username</label>
+          <input type="text" placeholder="eithan" value={username}
+            onChange={e => setUsername(e.target.value)} /></div>
+        <div className="auth-field"><label>Password</label>
+          <input type="password" placeholder="At least 8 characters" value={password}
+            onChange={e => setPassword(e.target.value)} /></div>
+        <div className="auth-field"><label>Confirm password</label>
+          <input type="password" placeholder="••••••••" value={confirm}
+            onChange={e => setConfirm(e.target.value)}
+            onKeyDown={e => e.key==="Enter" && handleSubmit()} /></div>
+        <button className="auth-btn-primary" onClick={handleSubmit} disabled={loading}>
+          {loading ? "Creating account…" : "Create account →"}
+        </button>
+        <div className="auth-footer">
+          <span>Already have an account?</span>
+          <button className="auth-btn-link" onClick={goLogin}>Sign in</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function _ForgotScreen({ goLogin, goReset }) {
+  const [email, setEmail]   = useState("");
+  const [error, setError]   = useState(null);
+  const [token, setToken]   = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit() {
+    setError(null); setLoading(true);
+    try {
+      const data = await _authFetch("/forgot-password", { email });
+      setToken(data.reset_token ?? data.token ?? null);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <_AuthBrand />
+        <h1 className="auth-title">Reset password</h1>
+        <p className="auth-subtitle">We'll generate a reset token for your account.</p>
+        {error && <div className="auth-notice auth-notice-error">{error}</div>}
+        {token ? (
+          <>
+            <div className="auth-notice auth-notice-success">
+              Token generated — copy it below (dev mode; would be emailed in production).
+            </div>
+            <div className="auth-token-box">{token}</div>
+            <hr className="auth-divider" />
+            <button className="auth-btn-primary" onClick={() => goReset(email, token)}>
+              Continue to reset →
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="auth-field"><label>Email</label>
+              <input type="email" placeholder="you@example.com" value={email}
+                onChange={e => setEmail(e.target.value)}
+                onKeyDown={e => e.key==="Enter" && handleSubmit()} autoFocus /></div>
+            <button className="auth-btn-primary" onClick={handleSubmit} disabled={loading}>
+              {loading ? "Sending…" : "Send reset token →"}
+            </button>
+          </>
+        )}
+        <div className="auth-footer">
+          <button className="auth-btn-link" onClick={goLogin}>← Back to sign in</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function _ResetScreen({ prefillEmail="", prefillToken="", goLogin }) {
+  const [email, setEmail]       = useState(prefillEmail);
+  const [token, setToken]       = useState(prefillToken);
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [error, setError]       = useState(null);
+  const [done, setDone]         = useState(false);
+  const [loading, setLoading]   = useState(false);
+
+  async function handleSubmit() {
+    setError(null);
+    if (password !== confirm) { setError("Passwords do not match."); return; }
+    if (password.length < 8)  { setError("Password must be at least 8 characters."); return; }
+    setLoading(true);
+    try {
+      await _authFetch("/reset-password", { email, token, new_password: password });
+      setDone(true);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        <_AuthBrand />
+        <h1 className="auth-title">New password</h1>
+        <p className="auth-subtitle">Enter your reset token and choose a new password.</p>
+        {error && <div className="auth-notice auth-notice-error">{error}</div>}
+        {done ? (
+          <>
+            <div className="auth-notice auth-notice-success">Password updated successfully.</div>
+            <button className="auth-btn-primary" onClick={goLogin}>Sign in →</button>
+          </>
+        ) : (
+          <>
+            <div className="auth-field"><label>Email</label>
+              <input type="email" value={email} placeholder="you@example.com"
+                onChange={e => setEmail(e.target.value)} /></div>
+            <div className="auth-field"><label>Reset token</label>
+              <input type="text" value={token} placeholder="Paste token here"
+                onChange={e => setToken(e.target.value)} /></div>
+            <div className="auth-field"><label>New password</label>
+              <input type="password" value={password} placeholder="At least 8 characters"
+                onChange={e => setPassword(e.target.value)} /></div>
+            <div className="auth-field"><label>Confirm new password</label>
+              <input type="password" value={confirm} placeholder="••••••••"
+                onChange={e => setConfirm(e.target.value)}
+                onKeyDown={e => e.key==="Enter" && handleSubmit()} /></div>
+            <button className="auth-btn-primary" onClick={handleSubmit} disabled={loading}>
+              {loading ? "Saving…" : "Set new password →"}
+            </button>
+          </>
+        )}
+        <div className="auth-footer">
+          <button className="auth-btn-link" onClick={goLogin}>← Back to sign in</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function _TopNav({ user, onLogout }) {
+  return (
+    <nav className="auth-topnav">
+      <div className="auth-topnav-brand">
+        <div className="auth-topnav-dot" />
+        WMS Validator
+      </div>
+      <div className="auth-topnav-spacer" />
+      {user && (
+        <span className="auth-topnav-user">
+          <span>{user.username ?? user.email}</span>
+          {user.role && <>&nbsp;·&nbsp;{user.role}</>}
+        </span>
+      )}
+      <button className="auth-btn-logout" onClick={onLogout}>Sign out</button>
+    </nav>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// END AUTH BLOCK
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EMBEDDED common_schema.json  v1.0.0  (2026-02-25)
 // Source: urn:wms:sap:common-payload-schema:v1
 //
@@ -13739,7 +14092,7 @@ function SchemaExplorer({ activeInterface }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN APP
 // ─────────────────────────────────────────────────────────────────────────────
-export default function NetworkValidator() {
+function ValidatorApp() {
   const [payloadText, setPayloadText]   = useState(SAMPLES.if2_pass.payload);
   const [result, setResult]             = useState(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -13955,4 +14308,66 @@ export default function NetworkValidator() {
       </div>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH ROUTER  —  wraps the validator
+// This is the new top-level App. The validator above is now called ValidatorApp.
+// ─────────────────────────────────────────────────────────────────────────────
+export default function App() {
+  _injectAuthStyles();
+
+  const [screen, setScreen]         = useState("login");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [token, setToken]           = useState(() => localStorage.getItem("wms_token"));
+  const [user,  setUser]            = useState(null);
+
+  // Fetch /me whenever token changes — validates the token is still good
+  useEffect(() => {
+    if (!token) { setUser(null); return; }
+    fetch(`${API_AUTH}/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(setUser)
+      .catch(() => { localStorage.removeItem("wms_token"); setToken(null); });
+  }, [token]);
+
+  const handleLogin  = useCallback(t => setToken(t), []);
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("wms_token");
+    setToken(null);
+    setScreen("login");
+  }, []);
+
+  // ── Logged in ──────────────────────────────────────────────────────────────
+  if (token) {
+    return (
+      <div style={{ display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+        <_TopNav user={user} onLogout={handleLogout} />
+        <div style={{ flex:1 }}>
+          <ValidatorApp />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Auth screens ───────────────────────────────────────────────────────────
+  if (screen === "register")
+    return <_RegisterScreen onLogin={handleLogin} goLogin={() => setScreen("login")} />;
+
+  if (screen === "forgot")
+    return <_ForgotScreen
+      goLogin={() => setScreen("login")}
+      goReset={(em, tok) => { setResetEmail(em); setResetToken(tok); setScreen("reset"); }}
+    />;
+
+  if (screen === "reset")
+    return <_ResetScreen
+      prefillEmail={resetEmail} prefillToken={resetToken}
+      goLogin={() => setScreen("login")}
+    />;
+
+  return <_LoginScreen onLogin={handleLogin}
+    goRegister={() => setScreen("register")}
+    goForgot={() => setScreen("forgot")} />;
 }
